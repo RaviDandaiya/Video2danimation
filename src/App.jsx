@@ -119,7 +119,7 @@ const App = () => {
     recorder.start();
 
     // ALLOCATE MATS
-    const src = new cv.Mat(height, width, cv.CV_8UC4);
+    let src = new cv.Mat(height, width, cv.CV_8UC4);
     const dst = new cv.Mat(height, width, cv.CV_8UC3);
     const gray = new cv.Mat(height, width, cv.CV_8UC1);
     const edges = new cv.Mat(height, width, cv.CV_8UC1);
@@ -432,54 +432,6 @@ const App = () => {
         Studio Engine v2.3 • High Fidelity Processing
       </footer>
 
-      <style jsx>{`
-        .no-underline { text-decoration: none; }
-        .flex { display: flex; }
-        .flex-col { flex-direction: column; }
-        .items-center { align-items: center; }
-        .gap-4 { gap: 1rem; }
-        .gap-6 { gap: 1.5rem; }
-        .space-y-10 > * + * { margin-top: 2.5rem; }
-        .mt-4 { margin-top: 1rem; }
-        .text-xs { font-size: 0.75rem; }
-        .text-secondary { color: var(--text-secondary); }
-        .mb-2 { margin-bottom: 0.5rem; }
-        .opacity-50 { opacity: 0.5; }
-        .loader-overlay {
-            position: absolute;
-            bottom: 15px;
-            right: 15px;
-            background: rgba(0,0,0,0.8);
-            border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 30px;
-            padding: 8px 16px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            backdrop-filter: blur(4px);
-            z-index: 50;
-        }
-        .loader-spinner {
-            width: 16px; 
-            height: 16px;
-            border: 2px solid rgba(255,255,255,0.2);
-            border-top-color: #d4af37;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        .loader-text {
-            font-size: 12px;
-            font-weight: 700;
-            color: #d4af37;
-            letter-spacing: 0.05em;
-        }
-        .placeholder-content {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            opacity: 0.5;
-        }
-      `}</style>
     </div>
   );
 };
