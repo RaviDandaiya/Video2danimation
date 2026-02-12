@@ -9,8 +9,8 @@ const App = () => {
   const [progress, setProgress] = useState(0);
   const [cvLoaded, setCvLoaded] = useState(false);
 
-  // 4 Anime Styles: hayao, shinkai, paprika, sketch
-  const [style, setStyle] = useState('hayao'); // Default
+  // 5 Anime Styles: hayao, shinkai, paprika, japanese, sketch
+  const [style, setStyle] = useState('japanese'); // Default
   const [theme, setTheme] = useState('dark');
 
   const toggleTheme = () => {
@@ -216,9 +216,12 @@ const App = () => {
         // 1. Prepare Main Mat (RGB)
         cv.cvtColor(src, dst, cv.COLOR_RGBA2RGB);
 
-        // 2. Caption Protection (High-Brightness Mask)
+        // 2. Caption Protection (Improved High-Detail Mask)
         cv.cvtColor(src, fullGray, cv.COLOR_RGBA2GRAY);
-        cv.threshold(fullGray, textMask, 230, 255, cv.THRESH_BINARY);
+        cv.threshold(fullGray, textMask, 200, 255, cv.THRESH_BINARY);
+        const M = cv.Mat.ones(2, 2, cv.CV_8U);
+        cv.dilate(textMask, textMask, M);
+        M.delete();
 
         // 3. STYLE LOGIC
         if (style === 'sketch') {
@@ -236,6 +239,12 @@ const App = () => {
           } else if (style === 'paprika') {
             cv.GaussianBlur(dst, tempMat, new cv.Size(5, 5), 0);
             cv.addWeighted(dst, 0.7, tempMat, 0.3, 0, dst);
+          } else if (style === 'japanese') {
+            // JAPANESE: Modern Cinema Anime Style
+            cv.medianBlur(dst, dst, 3);
+            cv.addWeighted(dst, 1.4, dst, -0.4, 0, dst); // Sharpening
+            cv.bilateralFilter(dst, tempMat, 5, 50, 50);
+            tempMat.copyTo(dst);
           }
 
           cv.cvtColor(dst, gray, cv.COLOR_RGB2GRAY);
@@ -257,6 +266,10 @@ const App = () => {
           } else if (style === 'paprika') {
             sMat.convertTo(sMat, -1, 1.8, 15);
             vMat.convertTo(vMat, -1, 1.05, 0);
+          } else if (style === 'japanese') {
+            // Cinematic contrasts
+            sMat.convertTo(sMat, -1, 1.4, 5);
+            vMat.convertTo(vMat, -1, 1.2, -10);
           }
 
           cv.merge(channels, tempMat);
@@ -424,7 +437,7 @@ const App = () => {
 
               <div className="controls-container">
                 <div className="model-selector">
-                  {['hayao', 'shinkai', 'paprika', 'sketch'].map(m => (
+                  {['hayao', 'shinkai', 'paprika', 'japanese', 'sketch'].map(m => (
                     <button
                       key={m}
                       onClick={() => setStyle(m)}
