@@ -88,35 +88,91 @@ const App = () => {
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
     const fps = 24;
-    const stream = canvas.captureStream(fps);
 
-    const mimeTypes = ['video/webm;codecs=vp9', 'video/webm', 'video/mp4'];
-    let selectedMime = mimeTypes.find(type => MediaRecorder.isTypeSupported(type)) || 'video/webm';
-
-    let recorder;
+    // 1. Audio Extraction and Setup
+    let audioBuffer = null;
     try {
-      recorder = new MediaRecorder(stream, {
-        mimeType: selectedMime,
-        videoBitsPerSecond: 25000000 // 25 Mbps
-      });
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const response = await fetch(videoUrl);
+      const arrayBuf = await response.arrayBuffer();
+      audioBuffer = await audioCtx.decodeAudioData(arrayBuf);
+      console.log("Audio decoded:", audioBuffer.duration, "s");
     } catch (e) {
-      console.error("Recorder error:", e);
-      recorder = new MediaRecorder(stream);
+      console.warn("Could not decode audio, proceeding without sound:", e);
     }
 
-    chunksRef.current = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data && e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunksRef.current, { type: selectedMime });
-      const url = URL.createObjectURL(blob);
-      setProcessedUrl(url);
-      setStatus('ready');
-      document.body.removeChild(video);
-      console.log("Recording stopped and saved.");
-    };
-    recorder.start();
+    // 2. Muxer & Encoders Setup
+    const { Muxer, ArrayBufferTarget } = await import('webm-muxer');
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: {
+        codec: 'V_VP9',
+        width: width,
+        height: height,
+        frameRate: fps
+      },
+      audio: audioBuffer ? {
+        codec: 'A_OPUS',
+        numberOfChannels: audioBuffer.numberOfChannels,
+        sampleRate: audioBuffer.sampleRate
+      } : undefined,
+      firstTimestampBehavior: 'offset'
+    });
+
+    const videoEncoder = new VideoEncoder({
+      output: (chunk, metadata) => muxer.addVideoChunk(chunk, metadata),
+      error: (e) => console.error("VideoEncoder error:", e)
+    });
+
+    videoEncoder.configure({
+      codec: 'vp09.00.10.08',
+      width: width,
+      height: height,
+      bitrate: 5_000_000,
+      latencyMode: 'quality'
+    });
+
+    let audioEncoder = null;
+    if (audioBuffer) {
+      audioEncoder = new AudioEncoder({
+        output: (chunk, metadata) => muxer.addAudioChunk(chunk, metadata),
+        error: (e) => console.error("AudioEncoder error:", e)
+      });
+      audioEncoder.configure({
+        codec: 'opus',
+        numberOfChannels: audioBuffer.numberOfChannels,
+        sampleRate: audioBuffer.sampleRate,
+        bitrate: 128_000
+      });
+    }
+
+    // 3. Populate Audio Chunks
+    if (audioEncoder && audioBuffer) {
+      const sampleRate = audioBuffer.sampleRate;
+      const totalFrames = audioBuffer.length;
+      const chunkSize = 4096;
+
+      for (let i = 0; i < totalFrames; i += chunkSize) {
+        const length = Math.min(chunkSize, totalFrames - i);
+        const data = new Float32Array(length * audioBuffer.numberOfChannels);
+        for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+          const channelData = audioBuffer.getChannelData(channel).subarray(i, i + length);
+          data.set(channelData, channel * length);
+        }
+
+        const audioData = new AudioData({
+          format: 'f32-planar',
+          sampleRate: sampleRate,
+          numberOfFrames: length,
+          numberOfChannels: audioBuffer.numberOfChannels,
+          timestamp: Math.round((i / sampleRate) * 1_000_000),
+          data: data
+        });
+        audioEncoder.encode(audioData);
+        audioData.close();
+      }
+      await audioEncoder.flush();
+    }
 
     // ALLOCATE MATS
     let src = new cv.Mat(height, width, cv.CV_8UC4);
@@ -144,7 +200,7 @@ const App = () => {
           let resolved = false;
           const h = () => { if (!resolved) { resolved = true; video.removeEventListener('seeked', h); resolve(); } };
           video.addEventListener('seeked', h);
-          setTimeout(h, 400); // 400ms failsafe
+          setTimeout(h, 500); // 500ms failsafe for high-res seeking
         });
 
         ctx.drawImage(video, 0, 0, width, height);
@@ -166,50 +222,39 @@ const App = () => {
 
         // 3. STYLE LOGIC
         if (style === 'sketch') {
-          // SKETCH: Clean High-Contrast Line Art
           cv.cvtColor(dst, gray, cv.COLOR_RGB2GRAY);
           cv.adaptiveThreshold(gray, edges, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
           cv.cvtColor(edges, dst, cv.COLOR_GRAY2RGB);
         } else {
-          // ANIME MODES
           if (style === 'hayao') {
-            // HAYAO: Soft Painterly look
             cv.bilateralFilter(dst, tempMat, 9, 75, 75);
             tempMat.copyTo(dst);
           } else if (style === 'shinkai') {
-            // SHINKAI: High Sharpness / Geometric Clarity
             cv.medianBlur(dst, dst, 3);
             cv.GaussianBlur(dst, tempMat, new cv.Size(0, 0), 3);
             cv.addWeighted(dst, 1.5, tempMat, -0.5, 0, dst);
           } else if (style === 'paprika') {
-            // PAPRIKA: Dream-like intensity
             cv.GaussianBlur(dst, tempMat, new cv.Size(5, 5), 0);
             cv.addWeighted(dst, 0.7, tempMat, 0.3, 0, dst);
           }
 
-          // Cartoon Outlines (Optimized to prevent "Blackout")
           cv.cvtColor(dst, gray, cv.COLOR_RGB2GRAY);
-          // Block size 7, Constant 5 provides clean thin lines without black chunks
           cv.adaptiveThreshold(gray, edges, 255, cv.ADAPTIVE_THRESH_MEAN_C, cv.THRESH_BINARY, 7, 5);
           cv.cvtColor(edges, edges, cv.COLOR_GRAY2RGB);
           cv.bitwise_and(dst, edges, dst);
 
-          // Color Enhancement (HSV Space)
           cv.cvtColor(dst, tempMat, cv.COLOR_RGB2HSV);
           cv.split(tempMat, channels);
           let sMat = channels.get(1);
           let vMat = channels.get(2);
 
           if (style === 'hayao') {
-            // Vibrant Nature Colors
             sMat.convertTo(sMat, -1, 1.5, 10);
             vMat.convertTo(vMat, -1, 1.1, 5);
           } else if (style === 'shinkai') {
-            // Higher Contrast, Clear Lighting
             sMat.convertTo(sMat, -1, 1.3, 0);
             vMat.convertTo(vMat, -1, 1.25, 10);
           } else if (style === 'paprika') {
-            // Surreal Red/Orange Intensity
             sMat.convertTo(sMat, -1, 1.8, 15);
             vMat.convertTo(vMat, -1, 1.05, 0);
           }
@@ -219,13 +264,16 @@ const App = () => {
           sMat.delete(); vMat.delete();
         }
 
-        // 4. Burn-in Protected Captions (RGBA -> RGB handled by src copy)
-        // Convert src to RGB for accurate copyTo matching dst
         cv.cvtColor(src, tempMat, cv.COLOR_RGBA2RGB);
         tempMat.copyTo(dst, textMask);
 
         // 5. Render to Screen
         cv.imshow(canvas, dst);
+
+        const timestamp = Math.round(currentTime * 1_000_000);
+        const frame = new VideoFrame(canvas, { timestamp });
+        videoEncoder.encode(frame);
+        frame.close();
 
         currentTime += step;
         frameCount++;
@@ -238,12 +286,24 @@ const App = () => {
         setProgress(pct);
         await new Promise(r => setTimeout(r, 0));
       }
+
+      // Finalize recording
+      await videoEncoder.flush();
+      if (audioEncoder) await audioEncoder.flush();
+      muxer.finalize();
+
+      const { buffer } = muxer.target;
+      const blob = new Blob([buffer], { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      setProcessedUrl(url);
+      setStatus('ready');
+
     } catch (err) {
       console.error("Processing Loop Error:", err);
       alert("Processing Error: " + err);
     } finally {
-      if (recorder.state === 'recording') recorder.stop();
-      // CLEANUP ALL MATS
+      document.body.removeChild(video);
+      // CLEANUP
       if (src) src.delete();
       if (dst) dst.delete();
       if (gray) gray.delete();
